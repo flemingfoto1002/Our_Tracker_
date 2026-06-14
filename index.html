@@ -2544,10 +2544,27 @@
     /* -------------------------------------------------------------
        SUPABASE REALTIME SYNCRONIZATION CHANNELS
        ------------------------------------------------------------- */
+    
+    function updateChannelStatusLabel(id, status, err) {
+      const label = document.getElementById(id);
+      if (!label) return;
+      
+      label.innerText = status;
+      if (status === "SUBSCRIBED") {
+        label.style.color = "#4CAF50"; // Green
+      } else if (status === "CHANNEL_ERROR") {
+        label.style.color = "#F44336"; // Red
+        console.error(`${id} Error detail:`, err);
+      } else if (status === "CLOSED") {
+        label.style.color = "#FF9800"; // Orange
+      }
+    }
+
     function initRealtimeSubscriptions() {
-      // 1. Granular tasks subscription [1]
+      // 1. Tasks Channel subscription with event handler
       tasksSubscription = supabaseClient.channel('tasks_channel')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, async (payload) => {
+          console.log("Realtime Task Event Received:", payload);
           if (payload.eventType === 'INSERT') {
             const newTask = rowToTask(payload.new);
             if (!tasksList.some(t => t.id === newTask.id)) {
@@ -2572,11 +2589,14 @@
           renderCalendarGrid();
           renderDashboard();
         })
-        .subscribe();
+        .subscribe((status, err) => {
+          updateChannelStatusLabel("tasks-status-label", status, err);
+        });
 
-      // 2. Communal habits subscription [1]
+      // 2. Communal habits subscription
       habitsSubscription = supabaseClient.channel('habits_channel')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'habits' }, async (payload) => {
+          console.log("Realtime Habit Event Received:", payload);
           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             const row = payload.new;
             habitsState[row.date_key] = row.values;
@@ -2584,11 +2604,14 @@
           }
           renderHabitsGrid();
         })
-        .subscribe();
+        .subscribe((status, err) => {
+          updateChannelStatusLabel("habits-status-label", status, err);
+        });
 
-      // 3. Vision Board subscription [1]
+      // 3. Vision Board subscription
       visionBoardSubscription = supabaseClient.channel('vision_board_channel')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'vision_board' }, async (payload) => {
+          console.log("Realtime Vision Event Received:", payload);
           if (payload.eventType === 'INSERT') {
             const newGoal = rowToGoal(payload.new);
             if (!visionBoardGoals.some(g => g.id === newGoal.id)) {
@@ -2602,9 +2625,11 @@
           }
           renderVisionBoard();
         })
-        .subscribe();
+        .subscribe((status, err) => {
+          updateChannelStatusLabel("vision-status-label", status, err);
+        });
 
-      // 4. Presence and Volatile Messaging (WebSocket broadcast channels)
+      // 4. Volatile Broadcasting Channel
       presenceChannel = supabaseClient.channel('presence')
         .on('broadcast', { event: 'ripple' }, (payload) => {
           if (payload.payload.sender !== currentUser) {
@@ -2618,7 +2643,6 @@
         })
         .subscribe();
 
-      // 5. Setup Pillow thoughts and Vault live files if condition is valid
       manageMidnightSubscriptions();
     }
 
@@ -2632,6 +2656,7 @@
 
         pillowThoughtsSubscription = supabaseClient.channel('pillow_thoughts_channel')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'pillow_thoughts' }, async (payload) => {
+            console.log("Realtime Thought Event Received:", payload);
             if (payload.eventType === 'INSERT') {
               const newThought = rowToThought(payload.new);
               if (!pillowThoughtsList.some(t => t.id === newThought.id)) {
@@ -2645,6 +2670,7 @@
 
         vaultFilesSubscription = supabaseClient.channel('vault_files_channel')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_files' }, async (payload) => {
+            console.log("Realtime Vault File Event Received:", payload);
             if (payload.eventType === 'INSERT') {
               const row = payload.new;
               if (!vaultMetadataList.some(f => f.id === row.id)) {
@@ -2667,13 +2693,11 @@
           })
           .subscribe();
 
-        // Release gates immediately on clock ticking over
         pullMidnightRelease();
 
       } else if (!unlocked && isSubscribedToMidnight) {
         isSubscribedToMidnight = false;
 
-        // Revoke streaming listeners to enforce dynamic lock gate
         if (pillowThoughtsSubscription) {
           supabaseClient.removeChannel(pillowThoughtsSubscription);
           pillowThoughtsSubscription = null;
